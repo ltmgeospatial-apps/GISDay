@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1f33">
+<title>GIS Day Trace Challenge | LTM Chennai</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+  :root{
+    --bg:#0b1f33ee; --panel:#0f2a44f2; --text:#eaf2fb; --muted:#9fb6cc;
+    --accent:#00c2a8; --danger:#ff4d5e; --warn:#ffb020; --pen:#ff2e88;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:#000;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--text)}
+  #map{position:fixed;inset:0}
+
+  /* Top HUD */
+  #hud{position:fixed;top:0;left:0;right:0;z-index:1000;padding:calc(env(safe-area-inset-top) + 8px) 10px 8px;
+       background:linear-gradient(var(--bg),#0b1f3300);display:flex;gap:8px;align-items:center}
+  #hud .title{font-weight:800;font-size:15px;line-height:1.1;white-space:nowrap}
+  #hud .title small{display:block;font-weight:500;font-size:11px;color:var(--muted)}
+  #team{flex:1;min-width:0;padding:8px 10px;border-radius:10px;border:1px solid #ffffff33;background:#00000055;color:var(--text);font-size:14px}
+  #gps{font-size:11px;padding:6px 8px;border-radius:999px;background:#00000066;border:1px solid #ffffff33;white-space:nowrap}
+  #gps.good{border-color:var(--accent);color:var(--accent)}
+  #gps.fair{border-color:var(--warn);color:var(--warn)}
+  #gps.bad{border-color:var(--danger);color:var(--danger)}
+
+  /* Bottom panel */
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:1000;background:var(--panel);
+         padding:10px 10px calc(env(safe-area-inset-bottom) + 10px);border-radius:16px 16px 0 0;box-shadow:0 -6px 20px #0006}
+  #stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+  .stat{background:#ffffff0d;border-radius:10px;padding:6px 4px;text-align:center}
+  .stat b{display:block;font-size:14px;font-variant-numeric:tabular-nums}
+  .stat span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  #main{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+  #tools{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+  button{font:inherit;border:0;border-radius:12px;color:#fff;cursor:pointer;touch-action:manipulation}
+  button:disabled{opacity:.35}
+  button:focus-visible{outline:3px solid #fff}
+  .big{padding:14px 8px;font-size:16px;font-weight:800}
+  #btnStart{background:var(--accent)}
+  #btnStop{background:var(--danger)}
+  .small{padding:10px 4px;font-size:12px;font-weight:600;background:#ffffff1f}
+  #btnReset{background:#ff4d5e33}
+
+  /* Recording indicator */
+  #rec{position:fixed;z-index:1000;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 60px);
+       background:var(--danger);color:#fff;font-weight:700;font-size:12px;padding:5px 12px;border-radius:999px;display:none}
+  #rec::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;background:#fff;margin-right:6px;animation:blink 1s infinite}
+  @keyframes blink{50%{opacity:.2}}
+
+  /* Toast */
+  #toast{position:fixed;z-index:1100;left:50%;bottom:210px;transform:translateX(-50%);max-width:90vw;
+         background:#000c;color:#fff;padding:8px 14px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .25s;pointer-events:none;text-align:center}
+  #toast.show{opacity:1}
+
+  /* Screenshot (clean) mode */
+  #shotLabel{position:fixed;z-index:1000;left:10px;top:calc(env(safe-area-inset-top) + 10px);display:none;
+             background:#000a;padding:8px 12px;border-radius:10px;font-size:13px;line-height:1.4}
+  #shotLabel b{font-size:15px}
+  body.clean #hud,body.clean #panel,body.clean #rec{display:none!important}
+  body.clean #shotLabel{display:block}
+  body.clean .leaflet-control-container .leaflet-top{display:none}
+
+  /* Location dot */
+  .me{width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 2px #1a73e866,0 2px 6px #0008}
+  .leaflet-control-attribution{font-size:9px}
+</style>
+</head>
+<body>
+
+<div id="map" aria-label="Satellite map"></div>
+
+<header id="hud">
+  <div class="title">GIS Day 🌍<small>Trace “GIS” Challenge</small></div>
+  <input id="team" type="text" maxlength="30" placeholder="Team name" aria-label="Team name">
+  <div id="gps" aria-live="polite">GPS …</div>
+</header>
+
+<div id="rec">TRACING</div>
+
+<div id="shotLabel" aria-live="polite"></div>
+
+<section id="panel">
+  <div id="stats">
+    <div class="stat"><b id="sStart">--:--:--</b><span>First start</span></div>
+    <div class="stat"><b id="sEnd">--:--:--</b><span>Last stop</span></div>
+    <div class="stat"><b id="sTotal">00:00</b><span>Total time</span></div>
+    <div class="stat"><b id="sDist">0 m</b><span>Distance</span></div>
+  </div>
+  <div id="main">
+    <button id="btnStart" class="big" type="button">▶ Start tracing</button>
+    <button id="btnStop" class="big" type="button" disabled>■ Stop tracing</button>
+  </div>
+  <div id="tools">
+    <button id="btnUndo" class="small" type="button" disabled>↶ Undo stroke</button>
+    <button id="btnReset" class="small" type="button" disabled>⟲ Reset</button>
+    <button id="btnLocate" class="small" type="button">◎ Locate me</button>
+    <button id="btnShot" class="small" type="button" disabled>📷 Clean view</button>
+  </div>
+</section>
+
+<div id="toast" role="status"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- Config ---------- */
+  var DEFAULT_CENTER = [13.0262655, 80.1782825]; // LTM Chennai towers walkway
+  var CFG = {
+    maxAccuracy: 30,   // ignore GPS fixes worse than this (metres)
+    minStep: 2,        // ignore movement smaller than this (metres) to cut jitter
+    maxSpeed: 4,       // ignore jumps faster than this (m/s) - walking/jogging only
+    zoom: 19
+  };
+
+  /* ---------- Map ---------- */
+  var map = L.map("map", { zoomControl: false, maxZoom: 21 }).setView(DEFAULT_CENTER, CFG.zoom);
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+    maxNativeZoom: 19, maxZoom: 21,
+    attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics"
+  }).addTo(map);
+  L.control.zoom({ position: "topright" }).addTo(map);
+  L.control.scale({ position: "topleft", imperial: false }).addTo(map);
+
+  var traceLayer = L.layerGroup().addTo(map);   // temporary graphics layer (memory only)
+  var meMarker = null, accCircle = null;
+
+  /* ---------- State ---------- */
+  var strokes = [];        // finished strokes: {casing, line, pts, dist}
+  var current = null;      // active stroke
+  var tracing = false;
+  var lastFix = null;      // {ll, acc, t}
+  var firstFix = true;
+  var follow = true;
+  var firstStart = null, lastEnd = null;
+  var wakeLock = null;
+
+  /* ---------- Helpers ---------- */
+  var $ = function (id) { return document.getElementById(id); };
+  var toastTimer = null;
+  function toast(msg, ms) {
+    var t = $("toast"); t.textContent = msg; t.classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(function () { t.classList.remove("show"); }, ms || 2500);
+  }
+  function fmtClock(d) {
+    if (!d) return "--:--:--";
+    return d.toLocaleTimeString("en-GB", { hour12: false });
+  }
+  function fmtDur(ms) {
+    if (!ms || ms < 0) ms = 0;
+    var s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    var mm = String(m).padStart(2, "0") + ":" + String(sec).padStart(2, "0");
+    return h ? h + ":" + mm : mm;
+  }
+  function totalDist() {
+    var d = strokes.reduce(function (a, s) { return a + s.dist; }, 0);
+    return d + (current ? current.dist : 0);
+  }
+  function fmtDist(m) { return m >= 1000 ? (m / 1000).toFixed(2) + " km" : Math.round(m) + " m"; }
+
+  function refreshUI() {
+    $("sStart").textContent = fmtClock(firstStart);
+    $("sEnd").textContent = fmtClock(lastEnd);
+    var endRef = tracing ? new Date() : lastEnd;
+    $("sTotal").textContent = firstStart && endRef ? fmtDur(endRef - firstStart) : "00:00";
+    $("sDist").textContent = fmtDist(totalDist());
+    $("btnStart").disabled = tracing;
+    $("btnStop").disabled = !tracing;
+    $("btnUndo").disabled = tracing || strokes.length === 0;
+    $("btnReset").disabled = !firstStart && strokes.length === 0 && !current;
+    $("btnShot").disabled = tracing || strokes.length === 0;
+    $("rec").style.display = tracing ? "block" : "none";
+  }
+  setInterval(function () { if (tracing) refreshUI(); }, 1000);
+
+  /* ---------- Wake lock (keeps screen on so GPS keeps flowing) ---------- */
+  function requestWakeLock() {
+    if (!("wakeLock" in navigator) || wakeLock) return;
+    navigator.wakeLock.request("screen").then(function (wl) {
+      wakeLock = wl; wl.addEventListener("release", function () { wakeLock = null; });
+    }).catch(function () {});
+  }
+  function releaseWakeLock() { if (wakeLock) { wakeLock.release().catch(function () {}); wakeLock = null; } }
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") {
+      if (firstStart) requestWakeLock();
+      if (tracing) toast("Welcome back - keep the screen on while tracing to avoid gaps.", 3500);
+    }
+  });
+
+  /* ---------- Geolocation ---------- */
+  function setGps(acc) {
+    var el = $("gps");
+    if (acc == null) { el.textContent = "GPS …"; el.className = ""; return; }
+    el.textContent = "GPS ±" + Math.round(acc) + " m";
+    el.className = acc <= 10 ? "good" : acc <= CFG.maxAccuracy ? "fair" : "bad";
+  }
+
+  function onPos(p) {
+    var ll = L.latLng(p.coords.latitude, p.coords.longitude);
+    var acc = p.coords.accuracy;
+    setGps(acc);
+
+    if (!meMarker) {
+      meMarker = L.marker(ll, { icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }), interactive: false, zIndexOffset: 1000 }).addTo(map);
+      accCircle = L.circle(ll, { radius: acc, color: "#1a73e8", weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
+    } else {
+      meMarker.setLatLng(ll); accCircle.setLatLng(ll).setRadius(acc);
+    }
+
+    if (firstFix) { map.setView(ll, CFG.zoom); firstFix = false; }
+    else if (follow) { map.panTo(ll, { animate: true }); }
+
+    var prev = lastFix;
+    lastFix = { ll: ll, acc: acc, t: p.timestamp || Date.now() };
+    if (tracing) addPoint(ll, acc, prev);
+  }
+
+  function onErr(e) {
+    var msg = e.code === 1 ? "Location permission denied. Enable location for this site in browser settings and reload."
+            : e.code === 2 ? "Location unavailable. Step into open sky and turn on GPS / high accuracy."
+            : "Waiting for GPS signal…";
+    setGps(null); toast(msg, 5000);
+  }
+
+  function startWatch() {
+    if (!window.isSecureContext) { toast("Location needs HTTPS. Open via the https:// link.", 6000); return; }
+    if (!("geolocation" in navigator)) { toast("This browser does not support location.", 5000); return; }
+    navigator.geolocation.watchPosition(onPos, onErr, { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 });
+  }
+
+  /* ---------- Tracing ---------- */
+  function newStroke() {
+    return {
+      casing: L.polyline([], { color: "#ffffff", weight: 10, opacity: 0.9, lineCap: "round", lineJoin: "round", interactive: false }).addTo(traceLayer),
+      line:   L.polyline([], { color: "#ff2e88", weight: 5, opacity: 1, lineCap: "round", lineJoin: "round", interactive: false }).addTo(traceLayer),
+      pts: [], dist: 0, lastT: 0
+    };
+  }
+
+  function addPoint(ll, acc, prevFix) {
+    if (!current) return;
+    if (acc > CFG.maxAccuracy) return;                  // poor fix, skip
+    var pts = current.pts, now = Date.now();
+    if (pts.length) {
+      var last = pts[pts.length - 1];
+      var d = last.distanceTo(ll);
+      if (d < CFG.minStep) return;                      // jitter, skip
+      var dt = (now - current.lastT) / 1000;
+      if (dt > 0 && d / dt > CFG.maxSpeed && d > acc) return; // GPS spike, skip
+      current.dist += d;
+    }
+    pts.push(ll); current.lastT = now;
+    current.casing.addLatLng(ll); current.line.addLatLng(ll);
+    refreshUI();
+  }
+
+  function startTracing() {
+    if (tracing) return;
+    if (!lastFix) toast("Waiting for GPS - your line will begin at the first good fix.", 3000);
+    tracing = true; follow = true;
+    if (!firstStart) firstStart = new Date();
+    current = newStroke();
+    if (lastFix) addPoint(lastFix.ll, lastFix.acc, null);
+    requestWakeLock();
+    if (navigator.vibrate) navigator.vibrate(60);
+    refreshUI();
+  }
+
+  function stopTracing() {
+    if (!tracing) return;
+    tracing = false; lastEnd = new Date();
+    if (current) {
+      if (current.pts.length < 2) {
+        traceLayer.removeLayer(current.casing); traceLayer.removeLayer(current.line);
+        toast("Stroke too short - nothing recorded. Move a few metres after Start.");
+      } else {
+        strokes.push(current);
+        toast("Stroke " + strokes.length + " saved. Walk to the next letter, then Start again.");
+      }
+    }
+    current = null;
+    if (navigator.vibrate) navigator.vibrate([40, 40, 40]);
+    refreshUI();
+  }
+
+  function undoStroke() {
+    if (tracing || !strokes.length) return;
+    var s = strokes.pop();
+    traceLayer.removeLayer(s.casing); traceLayer.removeLayer(s.line);
+    toast("Last stroke removed.");
+    refreshUI();
+  }
+
+  function resetAll() {
+    if (!confirm("Clear the whole trace and timer and start fresh?")) return;
+    tracing = false; current = null; strokes = [];
+    traceLayer.clearLayers();
+    firstStart = null; lastEnd = null;
+    releaseWakeLock();
+    toast("Reset done. Ready for a fresh attempt.");
+    refreshUI();
+  }
+
+  function locateMe() {
+    follow = true;
+    if (lastFix) map.setView(lastFix.ll, Math.max(map.getZoom(), CFG.zoom));
+    else toast("Still waiting for GPS…");
+  }
+
+  /* ---------- Clean screenshot view ---------- */
+  function cleanView() {
+    if (!strokes.length) return;
+    var b = L.latLngBounds([]);
+    strokes.forEach(function (s) { b.extend(s.line.getBounds()); });
+    map.fitBounds(b, { padding: [40, 40], maxZoom: 21 });
+    follow = false;
+    var team = $("team").value.trim() || "Team";
+    $("shotLabel").innerHTML = "";
+    var t = document.createElement("b"); t.textContent = team; $("shotLabel").appendChild(t);
+    $("shotLabel").appendChild(document.createElement("br"));
+    $("shotLabel").appendChild(document.createTextNode(
+      "Start " + fmtClock(firstStart) + " · End " + fmtClock(lastEnd) + " · " +
+      fmtDur(lastEnd - firstStart) + " · " + fmtDist(totalDist())));
+    $("shotLabel").appendChild(document.createElement("br"));
+    var hint = document.createElement("small"); hint.textContent = "GIS Day · LTM Chennai — tap map to exit";
+    $("shotLabel").appendChild(hint);
+    document.body.classList.add("clean");
+    toast("Take your screenshot now. Tap the map to return.", 3000);
+  }
+  map.on("click", function () { if (document.body.classList.contains("clean")) document.body.classList.remove("clean"); });
+
+  /* ---------- Wiring ---------- */
+  map.on("dragstart", function () { follow = false; });
+  $("btnStart").addEventListener("click", startTracing);
+  $("btnStop").addEventListener("click", stopTracing);
+  $("btnUndo").addEventListener("click", undoStroke);
+  $("btnReset").addEventListener("click", resetAll);
+  $("btnLocate").addEventListener("click", locateMe);
+  $("btnShot").addEventListener("click", cleanView);
+
+  window.addEventListener("beforeunload", function (e) {
+    if (strokes.length || tracing) { e.preventDefault(); e.returnValue = ""; }
+  });
+
+  refreshUI();
+  startWatch();
+})();
+</script>
+</body>
+</html>
